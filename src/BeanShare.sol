@@ -252,10 +252,13 @@ contract BeanShare is Ownable, IERC1155Receiver {
         return 0xf23a6e61;
     }
 
-    function onERC1155BatchReceived(address, address, uint256[] calldata, uint256[] calldata, bytes calldata)
-        external
-        returns (bytes4)
-    {
+    function onERC1155BatchReceived(
+        address,
+        address,
+        uint256[] calldata,
+        uint256[] calldata,
+        bytes calldata
+    ) external returns (bytes4) {
         return 0xbc197c81;
     }
 
@@ -277,23 +280,8 @@ contract BeanShare is Ownable, IERC1155Receiver {
     }
 
     function echidna_IDK() public returns (bool) {
-        if (_getAmountSupply(totalSuppliedIndex) > 100000000000) return false;
+        if (_getAmountSupply(totalSuppliedIndex) > 100_000_000_000) return false;
         return true;
-    }
-
-    function test_AddSupply() public {
-        address user = address(123);
-
-        deal(C.BEAN, user, 1000e6, true);
-
-        vm.prank(user);
-        ERC20(C.BEAN).approve(address(beanShare), 10e6);
-
-        vm.prank(user);
-        beanShare.addSupply(10e6);
-
-        vm.prank(user);
-        beanShare.removeSupply(10e6);
     }
 }
 
