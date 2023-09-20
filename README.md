@@ -15,3 +15,10 @@ A bean deposit can always be converted into a known number of Beans. This means 
 **Lenders** - Users who are comfortable with exposure to Bean risk but want to see immediate yield on their capital.
 
 **Borrowers** - Users who are long term bullish on Beanstalk but want to unlock their capital investment in the short term.
+
+# How to use
+Install forge, https://book.getfoundry.sh/reference/forge/forge-install
+
+To compile, run `forge compile`
+
+To run all tests, run `forge test`
