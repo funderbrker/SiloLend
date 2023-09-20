@@ -1,1 +1,0 @@
-// Interface for suppliers interacting with the contract
