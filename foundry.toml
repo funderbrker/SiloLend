@@ -13,7 +13,7 @@ mainnet = "${ALCHEMY_ETH_API_URL}"
 
 # See more format options https://book.getfoundry.sh/reference/config/formatter
 [fmt]
-line_length = 120
+line_length = 100
 tab_width = 4
 bracket_spacing = false
 int_types = "long"

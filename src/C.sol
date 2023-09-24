@@ -12,6 +12,6 @@ library C {
     address internal constant BEAN_DEPOSIT = address(0xC1E088fC1323b20BCBee9bd1B9fC9546db5624C5);
 
     // AUDIT should I use the immutable facet or upgradeable Beanstalk?
-    // address internal constant BEANSTALK = address(0xC1E088fC1323b20BCBee9bd1B9fC9546db5624C5);
+    address internal constant BEANSTALK = address(0xC1E088fC1323b20BCBee9bd1B9fC9546db5624C5);
     address internal constant SILO_FACET = address(0xf4B3629D1aa74eF8ab53Cc22728896B960F3a74E);
 }
