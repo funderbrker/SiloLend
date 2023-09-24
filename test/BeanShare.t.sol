@@ -111,4 +111,11 @@ contract BeanShareTest is Test {
         vm.prank(borrower);
         beanShare.removeBorrow(borrowAmount);
     }
+
+    function test_DepositIdHandling(address addr, int96 stem) public {
+        uint256 id = LibBeanstalk.packAddressAndStem(addr, stem);
+        (address unpackedAddr, int96 unpackedStem) = LibBeanstalk.unpackAddressAndStem(id);
+        require(addr == unpackedAddr, "Bad addr packing");
+        require(stem == unpackedStem, "Bad stem packing");
+    }
 }
