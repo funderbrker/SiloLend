@@ -49,8 +49,8 @@ contract BeanShare is Ownable, IERC1155Receiver {
     }
 
     function getUtilization() public view returns (uint256) {
-        uint256 totalBorrowed_ = _getAmountBorrow(totalBorrowedIndex);
-        uint256 totalSupplied_ = _getAmountSupply(totalSuppliedIndex);
+        uint256 totalBorrowed_ = _getAmount(totalBorrowedIndex, borrowIndex);
+        uint256 totalSupplied_ = _getAmount(totalSuppliedIndex, supplyIndex);
         if (totalSupplied_ == 0) return 0;
         return (C.FACTOR * totalBorrowed_) / totalSupplied_;
     }
@@ -83,22 +83,18 @@ contract BeanShare is Ownable, IERC1155Receiver {
 
     /////////////////////// Index Conversion ///////////////////////
 
-    function _getIndexSupply(uint256 amount_) private view returns (uint256) {
-        return (C.FACTOR_INDEX * amount_) / supplyIndex;
+    function _getAmount(uint256 index_, uint256 totalIndex_) private view returns (uint256) {
+        return (index_ * totalIndex_) / C.FACTOR_INDEX;
     }
 
-    function _getAmountSupply(uint256 index_) private view returns (uint256) {
-        return (index_ * supplyIndex) / C.FACTOR_INDEX;
+    function _getIndexSupply(uint256 amount_) private view returns (uint256) {
+        return (C.FACTOR_INDEX * amount_) / supplyIndex;
     }
 
     function _getIndexBorrow(uint256 amount_) private view returns (uint256) {
         return (C.FACTOR_INDEX * amount_) / borrowIndex;
         // AUDIT rounding issue? logic seen in compound
         // return (C.FACTOR_INDEX * amount_ +=borrowIndex_ - 1) / borrowIndex_;
-    }
-
-    function _getAmountBorrow(uint256 index_) private view returns (uint256) {
-        return (index_ * borrowIndex) / C.FACTOR_INDEX;
     }
 
     /////////////////////// Supply Add/Remove ///////////////////////
@@ -120,14 +116,14 @@ contract BeanShare is Ownable, IERC1155Receiver {
     }
 
     function _incrementSupply(address supplier, uint256 amount) private {
-        uint256 userSupplyBalance_ = _getAmountSupply(userSupplyIndex[supplier]) + amount;
+        uint256 userSupplyBalance_ = _getAmount(userSupplyIndex[supplier], supplyIndex) + amount;
         uint256 userSupplyIndex_ = _getIndexSupply(userSupplyBalance_);
         totalSuppliedIndex += userSupplyIndex_ - userSupplyIndex[supplier];
         userSupplyIndex[supplier] = userSupplyIndex_;
     }
 
     function _decrementSupply(address supplier, uint256 amount) private {
-        uint256 userSupplyBalance_ = _getAmountSupply(userSupplyIndex[supplier]) - amount;
+        uint256 userSupplyBalance_ = _getAmount(userSupplyIndex[supplier], supplyIndex) - amount;
         uint256 userSupplyIndex_ = _getIndexSupply(userSupplyBalance_);
         totalSuppliedIndex -= userSupplyIndex[supplier] - userSupplyIndex_;
         userSupplyIndex[supplier] = userSupplyIndex_;
@@ -150,14 +146,14 @@ contract BeanShare is Ownable, IERC1155Receiver {
     }
 
     function _incrementBorrow(address borrower, uint256 amount) private {
-        uint256 userBorrowBalance_ = _getAmountBorrow(userBorrowIndex[borrower]) + amount;
+        uint256 userBorrowBalance_ = _getAmount(userBorrowIndex[borrower], borrowIndex) + amount;
         uint256 userBorrowIndex_ = _getIndexBorrow(userBorrowBalance_);
         totalBorrowedIndex += userBorrowIndex_ - userBorrowIndex[borrower];
         userBorrowIndex[borrower] = userBorrowIndex_;
     }
 
     function _decrementBorrow(address borrower, uint256 amount) private {
-        uint256 userBorrowBalance_ = _getAmountBorrow(userBorrowIndex[borrower]) - amount;
+        uint256 userBorrowBalance_ = _getAmount(userBorrowIndex[borrower], borrowIndex) - amount;
         uint256 userBorrowIndex_ = _getIndexBorrow(userBorrowBalance_);
         totalBorrowedIndex -= userBorrowIndex[borrower] - userBorrowIndex_;
         userBorrowIndex[borrower] = userBorrowIndex_;
@@ -197,7 +193,7 @@ contract BeanShare is Ownable, IERC1155Receiver {
         _accrue();
 
         uint256 maxDebt_ = (MCR * collateralBalance[borrower]) / C.FACTOR;
-        uint256 userDebt_ = _getAmountBorrow(userBorrowIndex[borrower]);
+        uint256 userDebt_ = _getAmount(userBorrowIndex[borrower], borrowIndex);
         uint256 terminationAmount_ = ((userDebt_ - maxDebt_) * TERM_ADVANCE) / C.FACTOR;
         _decrementBorrow(borrower, terminationAmount_);
 
@@ -222,10 +218,11 @@ contract BeanShare is Ownable, IERC1155Receiver {
     /////////////////////// Reserves ///////////////////////
 
     function getReserves() public view returns (uint256) {
-        (uint256 supplyIndex_, uint256 borrowIndex_) = _getAccruedIndices(block.timestamp - lastAccrualTime);
+        (uint256 supplyIndex_, uint256 borrowIndex_) =
+            _getAccruedIndices(block.timestamp - lastAccrualTime);
         uint256 balance = ERC20(C.BEAN).balanceOf(address(this));
-        uint256 supplyAmount_ = _getAmountSupply(supplyIndex_);
-        uint256 borrowAmount_ = _getAmountBorrow(borrowIndex_);
+        uint256 supplyAmount_ = _getAmount(supplyIndex_, supplyIndex);
+        uint256 borrowAmount_ = _getAmount(borrowIndex_, borrowIndex);
         uint256 supplyAmountExcess_ = supplyAmount_ - borrowAmount_;
         return balance <= supplyAmountExcess_ ? 0 : balance - supplyAmountExcess_;
     }
@@ -236,10 +233,27 @@ contract BeanShare is Ownable, IERC1155Receiver {
         SafeTransferLib.safeTransfer(ERC20(C.BEAN), to, amount);
     }
 
+    /////////////////////// Data Access ///////////////////////
+
+    function getUserSupplyBalance(address user) external view returns (uint256) {
+        (uint256 supplyIndex_,) = _getAccruedIndices(block.timestamp - lastAccrualTime);
+        return _getAmount(userSupplyIndex[user], supplyIndex_);
+    }
+
+    function getUserBorrowBalance(address user) external view returns (uint256) {
+        (, uint256 borrowIndex_) = _getAccruedIndices(block.timestamp - lastAccrualTime);
+        return _getAmount(userBorrowIndex[user], borrowIndex_);
+    }
+
+    function getUserCollateralBalance(address user) external view returns (uint256) {
+        return collateralBalance[user];
+    }
+
     /////////////////////// Util ///////////////////////
 
+    /// @dev note Does not update indices.
     function requireAcceptableDebt(address borrower) private {
-        uint256 userDebt = _getAmountBorrow(userBorrowIndex[borrower]);
+        uint256 userDebt = _getAmount(userBorrowIndex[borrower], borrowIndex);
         uint256 maxDebt = (MCR * collateralBalance[borrower]) / C.FACTOR;
         require(userDebt <= maxDebt, "TooMuchDebt");
     }
@@ -248,7 +262,13 @@ contract BeanShare is Ownable, IERC1155Receiver {
         return interfaceId == type(IERC1155Receiver).interfaceId;
     }
 
-    function onERC1155Received(address, address, uint256, uint256, bytes calldata) external returns (bytes4) {
+    function onERC1155Received(
+        address,
+        address,
+        uint256,
+        uint256,
+        bytes calldata
+    ) external returns (bytes4) {
         return 0xf23a6e61;
     }
 
@@ -265,7 +285,8 @@ contract BeanShare is Ownable, IERC1155Receiver {
     /////////////////////// Invariants ///////////////////////
 
     function _netSupplyInv() internal view {
-        uint256 supplyAmountExcess_ = _getAmountSupply(totalSuppliedIndex) - _getAmountBorrow(totalBorrowedIndex);
+        uint256 supplyAmountExcess_ = _getAmount(totalSuppliedIndex, supplyIndex)
+            - _getAmount(totalBorrowedIndex, borrowIndex);
         // require(supplyAmountExcess_ >= 0, "SupplyTooLow");
         require(ERC20(C.BEAN).balanceOf(address(this)) >= supplyAmountExcess_, "BalanceTooLow");
     }
@@ -273,14 +294,20 @@ contract BeanShare is Ownable, IERC1155Receiver {
     /////////////////////// Testing ///////////////////////
 
     function echidna_NetSupplyInv() public returns (bool) {
-        if (_getAmountSupply(totalSuppliedIndex) < _getAmountBorrow(totalBorrowedIndex)) return false;
-        uint256 supplyAmountExcess_ = _getAmountSupply(totalSuppliedIndex) - _getAmountBorrow(totalBorrowedIndex);
+        if (
+            _getAmount(totalSuppliedIndex, supplyIndex)
+                < _getAmount(totalBorrowedIndex, borrowIndex)
+        ) {
+            return false;
+        }
+        uint256 supplyAmountExcess_ = _getAmount(totalSuppliedIndex, supplyIndex)
+            - _getAmount(totalBorrowedIndex, borrowIndex);
         // if (ERC20(C.BEAN).balanceOf(address(this)) < supplyAmountExcess_) return false;
         return true;
     }
 
     function echidna_IDK() public returns (bool) {
-        if (_getAmountSupply(totalSuppliedIndex) > 100_000_000_000) return false;
+        if (_getAmount(totalSuppliedIndex, supplyIndex) > 100_000_000_000) return false;
         return true;
     }
 }
