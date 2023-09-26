@@ -5,8 +5,10 @@ libs = ["lib"]
 solc = "0.8.19"
 
 [profile.default.invariant]
+seed = 1
 runs = 256 # default == 256
 depth = 15 # default == 15
+fail_on_revert = true
 
 [rpc_endpoints]
 mainnet = "${ALCHEMY_ETH_API_URL}"

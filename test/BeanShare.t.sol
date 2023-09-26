@@ -12,7 +12,8 @@ import {C} from "src/C.sol";
 import {BeanShare} from "src/BeanShare.sol";
 import {LibBeanstalk} from "src/LibBeanstalk.sol";
 
-import {IBeanstalkTest} from "test/IBeanstalkTest.sol";
+import {IBeanstalkTest} from "test/helpers/IBeanstalkTest.sol";
+import {BeanShareHandler} from "test/helpers/BeanShareHandler.sol";
 
 contract BeanShareTest is Test {
     BeanShare beanShare;
@@ -47,7 +48,7 @@ contract BeanShareTest is Test {
         ERC20(C.BEAN).approve(address(beanstalk), beanAmount);
 
         vm.prank(user);
-        (uint256 depositAmount, uint256 _bdv, int96 stem) = beanstalk.deposit(C.BEAN, beanAmount, 0);
+        (uint256 depositAmount,, int96 stem) = beanstalk.deposit(C.BEAN, beanAmount, 0);
 
         uint256 depositId = LibBeanstalk.packAddressAndStem(C.BEAN, stem);
         depositIds.push(depositId);
@@ -112,10 +113,40 @@ contract BeanShareTest is Test {
         beanShare.removeBorrow(borrowAmount);
     }
 
-    function test_DepositIdHandling(address addr, int96 stem) public {
+    function test_DepositIdHandling(address addr, int96 stem) public pure {
         uint256 id = LibBeanstalk.packAddressAndStem(addr, stem);
         (address unpackedAddr, int96 unpackedStem) = LibBeanstalk.unpackAddressAndStem(id);
         require(addr == unpackedAddr, "Bad addr packing");
         require(stem == unpackedStem, "Bad stem packing");
     }
+}
+
+contract BeanShareInvariant is Test {
+    BeanShareHandler public handler;
+
+    function setUp() public {
+        vm.recordLogs();
+        vm.createSelectFork(vm.rpcUrl("mainnet"), 18_208_878);
+
+        // Default invariant targets deployed here.
+        handler = new BeanShareHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_UserSupplyBalanceGEQSupplyIn() public view {
+        uint256 netUserSupplyIn;
+        for (uint256 i; i < handler.actorCount(); i++) {
+            address user = handler.actors(i);
+            netUserSupplyIn =
+                handler.ghost_UserAddSupply(user) - handler.ghost_UserRemoveSupply(user);
+            require(handler.beanShare().getUserSupplyBalance(user) >= netUserSupplyIn);
+        }
+    }
+
+    function invariant_CallSummary() public view {
+        handler.callSummary();
+    }
+
+    // NOTE should fail sometimes when loans forced terminated
+    // function invariant_SupplyGEQBorrow() {}
 }

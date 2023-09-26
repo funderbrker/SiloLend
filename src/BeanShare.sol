@@ -5,16 +5,17 @@ pragma solidity 0.8.19;
 // import {ERC4626} from "@solmate/mixins/ERC4626.sol";
 // import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
 import {IERC1155, IERC165} from "@openzeppelin/token/ERC1155/IERC1155.sol";
-import {IERC1155Receiver} from "@openzeppelin/token/ERC1155/IERC1155Receiver.sol";
+// import {IERC1155Receiver} from "@openzeppelin/token/ERC1155/IERC1155Receiver.sol";
 import {Ownable} from "@openzeppelin/access/Ownable.sol";
 import {ERC20} from "@solmate/tokens/ERC20.sol";
 import {SafeTransferLib} from "@solmate/utils/SafeTransferLib.sol";
 
 import {C} from "src/C.sol";
+import {IBeanShare} from "src/interfaces/IBeanShare.sol";
 import {ISiloFacet} from "src/interfaces/ISiloFacet.sol";
 import {LibBeanstalk} from "src/LibBeanstalk.sol";
 
-contract BeanShare is Ownable, IERC1155Receiver {
+contract BeanShare is IBeanShare, Ownable {
     uint256 public totalSuppliedIndex;
     uint256 public totalBorrowedIndex;
 
@@ -38,17 +39,19 @@ contract BeanShare is Ownable, IERC1155Receiver {
 
     /////////////////////// Utilization and Rates ///////////////////////
 
-    function getSupplyRate(uint256 utilization) public view returns (uint256) {
+    function getSupplyRate(uint256 utilization) public pure override returns (uint256) {
+        utilization = utilization; // silence temp warnings
         // TODO PLACEHOLDER
         return C.FACTOR / 20 / 365 / 24 / 60 / 60;
     }
 
-    function getBorrowRate(uint256 utilization) public view returns (uint256) {
+    function getBorrowRate(uint256 utilization) public pure override returns (uint256) {
+        utilization = utilization; // silence temp warnings
         // TODO PLACEHOLDER
         return C.FACTOR / 20 / 365 / 24 / 60 / 60;
     }
 
-    function getUtilization() public view returns (uint256) {
+    function getUtilization() public view override returns (uint256) {
         uint256 totalBorrowed_ = _getAmount(totalBorrowedIndex, borrowIndex);
         uint256 totalSupplied_ = _getAmount(totalSuppliedIndex, supplyIndex);
         if (totalSupplied_ == 0) return 0;
@@ -83,7 +86,7 @@ contract BeanShare is Ownable, IERC1155Receiver {
 
     /////////////////////// Index Conversion ///////////////////////
 
-    function _getAmount(uint256 index_, uint256 totalIndex_) private view returns (uint256) {
+    function _getAmount(uint256 index_, uint256 totalIndex_) private pure returns (uint256) {
         return (index_ * totalIndex_) / C.FACTOR_INDEX;
     }
 
@@ -99,7 +102,7 @@ contract BeanShare is Ownable, IERC1155Receiver {
 
     /////////////////////// Supply Add/Remove ///////////////////////
 
-    function addSupply(uint256 amount) public {
+    function addSupply(uint256 amount) external override {
         _accrue();
         _incrementSupply(msg.sender, amount);
         // deposit(assets, msg.sender);
@@ -107,7 +110,7 @@ contract BeanShare is Ownable, IERC1155Receiver {
         _netSupplyInv();
     }
 
-    function removeSupply(uint256 amount) public {
+    function removeSupply(uint256 amount) external override {
         _accrue();
         _decrementSupply(msg.sender, amount);
         // redeem(shares, msg.sender, msg.sender);
@@ -131,14 +134,14 @@ contract BeanShare is Ownable, IERC1155Receiver {
 
     /////////////////////// Take/Close Loan ///////////////////////
 
-    function addBorrow(uint256 amount) external {
+    function addBorrow(uint256 amount) external override {
         _accrue();
         _incrementBorrow(msg.sender, amount);
         requireAcceptableDebt(msg.sender);
         SafeTransferLib.safeTransfer(ERC20(C.BEAN), msg.sender, amount);
     }
 
-    function removeBorrow(uint256 amount) external {
+    function removeBorrow(uint256 amount) external override {
         _accrue();
         _decrementBorrow(msg.sender, amount);
         requireAcceptableDebt(msg.sender);
@@ -161,7 +164,7 @@ contract BeanShare is Ownable, IERC1155Receiver {
 
     /////////////////////// Collateral Add/Remove ///////////////////////
 
-    function addCollateral(uint256[] calldata ids, uint256[] calldata values) public {
+    function addCollateral(uint256[] calldata ids, uint256[] calldata values) external override {
         for (uint256 i; i < ids.length; i++) {
             _incrementCollateral(msg.sender, ids[i], values[i]);
         }
@@ -169,7 +172,10 @@ contract BeanShare is Ownable, IERC1155Receiver {
         IERC1155(C.BEAN_DEPOSIT).safeBatchTransferFrom(msg.sender, address(this), ids, values, "");
     }
 
-    function removeCollateral(uint256[] calldata ids, uint256[] calldata values) public {
+    function removeCollateral(
+        uint256[] calldata ids,
+        uint256[] calldata values
+    ) external override {
         for (uint256 i; i < ids.length; i++) {
             _decrementCollateral(msg.sender, ids[i], values[i]);
         }
@@ -189,7 +195,7 @@ contract BeanShare is Ownable, IERC1155Receiver {
 
     /////////////////////// Loan Termination ///////////////////////
 
-    function terminate(address borrower, uint256[] calldata depositIds) external {
+    function terminate(address borrower, uint256[] calldata depositIds) external override {
         _accrue();
 
         uint256 maxDebt_ = (MCR * collateralBalance[borrower]) / C.FACTOR;
@@ -217,7 +223,7 @@ contract BeanShare is Ownable, IERC1155Receiver {
 
     /////////////////////// Reserves ///////////////////////
 
-    function getReserves() public view returns (uint256) {
+    function getReserves() public view override returns (uint256) {
         (uint256 supplyIndex_, uint256 borrowIndex_) =
             _getAccruedIndices(block.timestamp - lastAccrualTime);
         uint256 balance = ERC20(C.BEAN).balanceOf(address(this));
@@ -227,7 +233,7 @@ contract BeanShare is Ownable, IERC1155Receiver {
         return balance <= supplyAmountExcess_ ? 0 : balance - supplyAmountExcess_;
     }
 
-    function withdrawReserves(address to, uint256 amount) external onlyOwner {
+    function withdrawReserves(address to, uint256 amount) external override onlyOwner {
         uint256 reserves = getReserves();
         require(amount <= reserves, "TooFewReserves");
         SafeTransferLib.safeTransfer(ERC20(C.BEAN), to, amount);
@@ -235,52 +241,52 @@ contract BeanShare is Ownable, IERC1155Receiver {
 
     /////////////////////// Data Access ///////////////////////
 
-    function getUserSupplyBalance(address user) external view returns (uint256) {
+    function getUserSupplyBalance(address user) external view override returns (uint256) {
         (uint256 supplyIndex_,) = _getAccruedIndices(block.timestamp - lastAccrualTime);
         return _getAmount(userSupplyIndex[user], supplyIndex_);
     }
 
-    function getUserBorrowBalance(address user) external view returns (uint256) {
+    function getUserBorrowBalance(address user) external view override returns (uint256) {
         (, uint256 borrowIndex_) = _getAccruedIndices(block.timestamp - lastAccrualTime);
         return _getAmount(userBorrowIndex[user], borrowIndex_);
     }
 
-    function getUserCollateralBalance(address user) external view returns (uint256) {
+    function getUserCollateralBalance(address user) external view override returns (uint256) {
         return collateralBalance[user];
     }
 
     /////////////////////// Util ///////////////////////
 
     /// @dev note Does not update indices.
-    function requireAcceptableDebt(address borrower) private {
+    function requireAcceptableDebt(address borrower) private view {
         uint256 userDebt = _getAmount(userBorrowIndex[borrower], borrowIndex);
         uint256 maxDebt = (MCR * collateralBalance[borrower]) / C.FACTOR;
         require(userDebt <= maxDebt, "TooMuchDebt");
     }
 
-    function supportsInterface(bytes4 interfaceId) public pure override(IERC165) returns (bool) {
-        return interfaceId == type(IERC1155Receiver).interfaceId;
-    }
+    // function supportsInterface(bytes4 interfaceId) public pure override(IERC165) returns (bool) {
+    //     return interfaceId == type(IERC1155Receiver).interfaceId;
+    // }
 
-    function onERC1155Received(
-        address,
-        address,
-        uint256,
-        uint256,
-        bytes calldata
-    ) external returns (bytes4) {
-        return 0xf23a6e61;
-    }
+    // function onERC1155Received(
+    //     address,
+    //     address,
+    //     uint256,
+    //     uint256,
+    //     bytes calldata
+    // )  external override returns (bytes4) {
+    //     return 0xf23a6e61;
+    // }
 
-    function onERC1155BatchReceived(
-        address,
-        address,
-        uint256[] calldata,
-        uint256[] calldata,
-        bytes calldata
-    ) external returns (bytes4) {
-        return 0xbc197c81;
-    }
+    // function onERC1155BatchReceived(
+    //     address,
+    //     address,
+    //     uint256[] calldata,
+    //     uint256[] calldata,
+    //     bytes calldata
+    // )  external override returns (bytes4) {
+    //     return 0xbc197c81;
+    // }
 
     /////////////////////// Invariants ///////////////////////
 
@@ -293,23 +299,18 @@ contract BeanShare is Ownable, IERC1155Receiver {
 
     /////////////////////// Testing ///////////////////////
 
-    function echidna_NetSupplyInv() public returns (bool) {
-        if (
-            _getAmount(totalSuppliedIndex, supplyIndex)
-                < _getAmount(totalBorrowedIndex, borrowIndex)
-        ) {
-            return false;
-        }
-        uint256 supplyAmountExcess_ = _getAmount(totalSuppliedIndex, supplyIndex)
-            - _getAmount(totalBorrowedIndex, borrowIndex);
-        // if (ERC20(C.BEAN).balanceOf(address(this)) < supplyAmountExcess_) return false;
-        return true;
-    }
-
-    function echidna_IDK() public returns (bool) {
-        if (_getAmount(totalSuppliedIndex, supplyIndex) > 100_000_000_000) return false;
-        return true;
-    }
+    // function echidna_NetSupplyInv() public returns (bool) {
+    //     if (
+    //         _getAmount(totalSuppliedIndex, supplyIndex)
+    //             < _getAmount(totalBorrowedIndex, borrowIndex)
+    //     ) {
+    //         return false;
+    //     }
+    //     uint256 supplyAmountExcess_ = _getAmount(totalSuppliedIndex, supplyIndex)
+    //         - _getAmount(totalBorrowedIndex, borrowIndex);
+    //     // if (ERC20(C.BEAN).balanceOf(address(this)) < supplyAmountExcess_) return false;
+    //     return true;
+    // }
 }
 
 // TODO termination of borrower loan
