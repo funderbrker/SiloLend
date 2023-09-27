@@ -11,7 +11,7 @@ import {ISiloFacet} from "src/interfaces/ISiloFacet.sol";
 library LibBeanstalk {
     /// @notice Returns the deposit ID with Beanstalk stem in current season.
     function getCurrentDepositId(address token) internal view returns (uint256) {
-        ISiloFacet silo_facet_ = ISiloFacet(C.SILO_FACET);
+        ISiloFacet silo_facet_ = ISiloFacet(C.BEANSTALK);
         return silo_facet_.getDepositId(token, silo_facet_.stemTipForToken(token));
     }
 

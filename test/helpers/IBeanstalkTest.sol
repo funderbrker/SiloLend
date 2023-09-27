@@ -10,4 +10,9 @@ interface IBeanstalkTest is ISiloFacet {
         uint256 amount,
         uint8 mode
     ) external returns (uint256 depositAmount, uint256 bdv, int96 stem);
+
+    function balanceOf(
+        address account, 
+        uint256 depositId
+    ) external view returns (uint256 amount);
 }

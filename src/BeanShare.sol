@@ -21,10 +21,11 @@ contract BeanShare is IBeanShare, Ownable {
 
     // Max collateralization ratio.
     uint256 public constant MCR = C.FACTOR;
-    uint256 public constant TERM_ADVANCE = (C.FACTOR * 105) / 100; // 105%
+    uint256 public constant TERM_OVERSHOOT = C.FACTOR * 105 / 100; // 5% excess
 
     mapping(address => uint256) collateralBalance;
     mapping(address => mapping(uint256 => uint256)) deposits;
+    // NOTE tracking total collateral balance would allow invariant system MCR checking, but not necessary.
 
     // Relative ownerships of supply / debt.
     uint256 supplyIndex = C.FACTOR_INDEX; // arbitrary init
@@ -42,13 +43,13 @@ contract BeanShare is IBeanShare, Ownable {
     function getSupplyRate(uint256 utilization) public pure override returns (uint256) {
         utilization = utilization; // silence temp warnings
         // TODO PLACEHOLDER
-        return C.FACTOR / 20 / 365 / 24 / 60 / 60;
+        return C.FACTOR / 20 / 365 / 24 / 60 / 60; // 5% apr
     }
 
     function getBorrowRate(uint256 utilization) public pure override returns (uint256) {
         utilization = utilization; // silence temp warnings
         // TODO PLACEHOLDER
-        return C.FACTOR / 20 / 365 / 24 / 60 / 60;
+        return C.FACTOR / 20 / 365 / 24 / 60 / 60; // 5% apr
     }
 
     function getUtilization() public view override returns (uint256) {
@@ -95,9 +96,8 @@ contract BeanShare is IBeanShare, Ownable {
     }
 
     function _getIndexBorrow(uint256 amount_) private view returns (uint256) {
-        return (C.FACTOR_INDEX * amount_) / borrowIndex;
-        // AUDIT rounding issue? logic seen in compound
-        // return (C.FACTOR_INDEX * amount_ +=borrowIndex_ - 1) / borrowIndex_;
+        // Round up.
+        return (C.FACTOR_INDEX * amount_ + (borrowIndex - 1)) / borrowIndex;
     }
 
     /////////////////////// Supply Add/Remove ///////////////////////
@@ -195,19 +195,44 @@ contract BeanShare is IBeanShare, Ownable {
 
     /////////////////////// Loan Termination ///////////////////////
 
+    // TODO add caller reward?
     function terminate(address borrower, uint256[] calldata depositIds) external override {
         _accrue();
 
-        uint256 maxDebt_ = (MCR * collateralBalance[borrower]) / C.FACTOR;
-        uint256 userDebt_ = _getAmount(userBorrowIndex[borrower], borrowIndex);
-        uint256 terminationAmount_ = ((userDebt_ - maxDebt_) * TERM_ADVANCE) / C.FACTOR;
-        _decrementBorrow(borrower, terminationAmount_);
+        uint256 userDebt = _getAmount(userBorrowIndex[borrower], borrowIndex);
+        uint256 userCollateral = collateralBalance[borrower];
+        uint256 excessDebt = _getExcessDebt(borrower, borrowIndex); // borrow/coll needed to close to get healthy.
+        uint256 maxDebtToTerminate = excessDebt + userDebt * TERM_OVERSHOOT / C.FACTOR; // round up
+        uint256 terminationDebt_;
+        uint256 badDebt;
 
-        ISiloFacet siloFacet_ = ISiloFacet(C.SILO_FACET);
+        require(excessDebt > 0, "Not terminable");
+
+        // Borrower has larger position than necessary.
+        if (maxDebtToTerminate <= userDebt) {
+            terminationDebt_ = maxDebtToTerminate;
+            // Borrower has smaller position that possible termination, but large enough to pay all debts.
+        } else if (userCollateral >= userDebt) {
+            terminationDebt_ = userDebt;
+        }
+        // Else borrower has bad debt.
+        else {
+            terminationDebt_ = userCollateral;
+            badDebt = userDebt - userCollateral;
+            // reserves and msg.sender needs to pick up tab to prevent bad debt in the system.
+            uint256 reserves = _getReserves(supplyIndex, borrowIndex);
+            if (badDebt > reserves) {
+                ERC20(C.BEAN).transferFrom(msg.sender, address(this), badDebt - reserves);
+            }
+        }
+
+        _decrementBorrow(borrower, terminationDebt_ + badDebt);
+
+        ISiloFacet siloFacet_ = ISiloFacet(C.BEANSTALK);
         for (uint256 i; i < depositIds.length; i++) {
             (, int96 stem_) = LibBeanstalk.unpackAddressAndStem(depositIds[i]);
             uint256 deposit_ = deposits[borrower][depositIds[i]];
-            uint256 closeAmount_ = terminationAmount_ < deposit_ ? terminationAmount_ : deposit_;
+            uint256 closeAmount_ = terminationDebt_ < deposit_ ? terminationDebt_ : deposit_;
             siloFacet_.withdrawDeposit(
                 C.BEAN,
                 stem_,
@@ -215,10 +240,27 @@ contract BeanShare is IBeanShare, Ownable {
                 0 // LibTransfer.To mode == EXTERNAL
             );
             _decrementCollateral(borrower, depositIds[i], closeAmount_);
-            terminationAmount_ -= closeAmount_;
+            terminationDebt_ -= closeAmount_;
         }
-        require(terminationAmount_ == 0, "TerminateDepositsTooSmall");
-        requireAcceptableDebt(borrower); // TODO unnecessary ?
+        require(terminationDebt_ == 0, "TerminateDepositsTooSmall");
+        requireAcceptableDebt(borrower);
+
+        // Balance of Beans has increased, supply entitlement unchanged.
+        // Effectively, collateral migrated into supply and reserves with no penalty.
+    }
+
+    function isTerminable(address borrower) public view returns (bool) {
+        (, uint256 borrowIndex_) = _getAccruedIndices(block.timestamp - lastAccrualTime);
+        return _getExcessDebt(borrower, borrowIndex_) == 0 ? false : true;
+    }
+
+    function _getExcessDebt(
+        address borrower,
+        uint256 borrowIndex_
+    ) private view returns (uint256) {
+        uint256 maxDebt_ = (MCR * collateralBalance[borrower]) / C.FACTOR;
+        uint256 userDebt_ = _getAmount(userBorrowIndex[borrower], borrowIndex_);
+        return userDebt_ <= maxDebt_ ? 0 : userDebt_ - maxDebt_;
     }
 
     /////////////////////// Reserves ///////////////////////
@@ -226,9 +268,16 @@ contract BeanShare is IBeanShare, Ownable {
     function getReserves() public view override returns (uint256) {
         (uint256 supplyIndex_, uint256 borrowIndex_) =
             _getAccruedIndices(block.timestamp - lastAccrualTime);
+        return _getReserves(supplyIndex_, borrowIndex_);
+    }
+
+    function _getReserves(
+        uint256 supplyIndex_,
+        uint256 borrowIndex_
+    ) private view returns (uint256) {
         uint256 balance = ERC20(C.BEAN).balanceOf(address(this));
-        uint256 supplyAmount_ = _getAmount(supplyIndex_, supplyIndex);
-        uint256 borrowAmount_ = _getAmount(borrowIndex_, borrowIndex);
+        uint256 supplyAmount_ = _getAmount(totalSuppliedIndex, supplyIndex_);
+        uint256 borrowAmount_ = _getAmount(totalBorrowedIndex, borrowIndex_);
         uint256 supplyAmountExcess_ = supplyAmount_ - borrowAmount_;
         return balance <= supplyAmountExcess_ ? 0 : balance - supplyAmountExcess_;
     }
@@ -240,6 +289,16 @@ contract BeanShare is IBeanShare, Ownable {
     }
 
     /////////////////////// Data Access ///////////////////////
+
+    function getSupplyBalance() external view override returns (uint256) {
+        (uint256 supplyIndex_,) = _getAccruedIndices(block.timestamp - lastAccrualTime);
+        return _getAmount(totalSuppliedIndex, supplyIndex_);
+    }
+
+    function getBorrowBalance() external view override returns (uint256) {
+        (, uint256 borrowIndex_) = _getAccruedIndices(block.timestamp - lastAccrualTime);
+        return _getAmount(totalBorrowedIndex, borrowIndex_);
+    }
 
     function getUserSupplyBalance(address user) external view override returns (uint256) {
         (uint256 supplyIndex_,) = _getAccruedIndices(block.timestamp - lastAccrualTime);
@@ -259,9 +318,12 @@ contract BeanShare is IBeanShare, Ownable {
 
     /// @dev note Does not update indices.
     function requireAcceptableDebt(address borrower) private view {
-        uint256 userDebt = _getAmount(userBorrowIndex[borrower], borrowIndex);
-        uint256 maxDebt = (MCR * collateralBalance[borrower]) / C.FACTOR;
-        require(userDebt <= maxDebt, "TooMuchDebt");
+        require(_getExcessDebt(borrower, borrowIndex) == 0, "TooMuchUserDebt");
+        require(
+            _getAmount(totalBorrowedIndex, borrowIndex)
+                <= _getAmount(totalSuppliedIndex, supplyIndex),
+            "TooMuchDebt"
+        );
     }
 
     // function supportsInterface(bytes4 interfaceId) public pure override(IERC165) returns (bool) {

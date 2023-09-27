@@ -28,11 +28,17 @@ contract BeanShareHandler is Test, AddressBook, callCounter {
     ERC1155 beanDeposits;
 
     // Ghost variables.
+    uint256 public ghost_AddSupply;
     mapping(address => uint256) public ghost_UserAddSupply;
+    uint256 public ghost_RemoveSupply;
     mapping(address => uint256) public ghost_UserRemoveSupply;
+    uint256 public ghost_AddCollateral;
     mapping(address => uint256) public ghost_UserAddCollateral;
+    uint256 public ghost_RemoveCollateral;
     mapping(address => uint256) public ghost_UserRemoveCollateral;
+    uint256 public ghost_AddBorrow;
     mapping(address => uint256) public ghost_UserAddBorrow;
+    uint256 public ghost_RemoveBorrow;
     mapping(address => uint256) public ghost_UserRemoveBorrow;
 
     mapping(address => uint256[]) ghost_UserDeposits;
@@ -49,6 +55,7 @@ contract BeanShareHandler is Test, AddressBook, callCounter {
         deal(C.BEAN, msg.sender, amount, true); // avoid revert
         ERC20(C.BEAN).approve(address(beanShare), amount);
 
+        ghost_AddSupply += amount;
         ghost_UserAddSupply[msg.sender] += amount;
         beanShare.addSupply(amount);
     }
@@ -59,6 +66,7 @@ contract BeanShareHandler is Test, AddressBook, callCounter {
     ) external useActor(actorSeed) countCall("removeSupply") {
         amount = bound(amount, 0, beanShare.getUserSupplyBalance(msg.sender)); // avoid revert
 
+        ghost_RemoveSupply += amount;
         ghost_UserRemoveSupply[msg.sender] += amount;
         beanShare.removeSupply(amount);
     }
@@ -73,6 +81,9 @@ contract BeanShareHandler is Test, AddressBook, callCounter {
         require(depositAmount == values[0], "Unexpected depositAmount");
         ids[0] = LibBeanstalk.packAddressAndStem(C.BEAN, stem);
         beanstalk.approveDeposit(address(beanShare), C.BEAN, values[0]);
+
+        ghost_AddCollateral += values[0];
+        ghost_UserAddCollateral[msg.sender] += values[0];
         beanShare.addCollateral(ids, values);
     }
 
@@ -91,6 +102,9 @@ contract BeanShareHandler is Test, AddressBook, callCounter {
         ids[0] = id;
         uint256[] memory values = new uint256[](1);
         values[0] = amount;
+
+        ghost_RemoveCollateral += values[0];
+        ghost_UserRemoveCollateral[msg.sender] += values[0];
         beanShare.removeCollateral(ids, values);
     }
 
@@ -101,6 +115,9 @@ contract BeanShareHandler is Test, AddressBook, callCounter {
         uint256 borrowCapacity =
             beanShare.getUserCollateralBalance(msg.sender) * beanShare.MCR() / C.FACTOR;
         amount = bound(amount, 0, borrowCapacity - beanShare.getUserBorrowBalance(msg.sender));
+
+        ghost_AddBorrow += amount;
+        ghost_UserAddBorrow[msg.sender] += amount;
         beanShare.addBorrow(amount);
     }
 
@@ -109,6 +126,9 @@ contract BeanShareHandler is Test, AddressBook, callCounter {
         uint256 actorSeed
     ) external useActor(actorSeed) countCall("removeBorrow") {
         amount = bound(amount, 0, beanShare.getUserBorrowBalance(msg.sender));
+
+        ghost_RemoveBorrow += amount;
+        ghost_UserRemoveBorrow[msg.sender] += amount;
         beanShare.removeBorrow(amount);
     }
 

@@ -19,11 +19,17 @@ interface IBeanShare {
 
     function withdrawReserves(address to, uint256 amount) external;
 
+    function getSupplyBalance() external view returns (uint256);
+
+    function getBorrowBalance() external view returns (uint256);
+
     function getUserSupplyBalance(address user) external view returns (uint256);
 
     function getUserBorrowBalance(address user) external view returns (uint256);
 
     function getUserCollateralBalance(address user) external view returns (uint256);
+
+    function isTerminable(address borrower) external view returns (bool);
 
     function getSupplyRate(uint256 utilization) external view returns (uint256);
 
